@@ -4,17 +4,83 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <poll.h>
 
 #define PORT 8080
 
+#define errExit(msg)        \
+    do                      \
+    {                       \
+        perror(msg);        \
+        exit(EXIT_FAILURE); \
+    } while (0)
+
+int poll_msgs(int socket_fd)
+{
+    int ready = 0;
+    nfds_t nfds = 1;
+    struct pollfd *pfds;
+
+    pfds = calloc(1, sizeof(struct pollfd));
+    if (pfds == NULL)
+        errExit("calloc");
+    pfds->fd = socket_fd;
+    pfds->events = POLLIN | POLLHUP | POLLERR;
+
+    printf("Server started, waiting for messages\n");
+    char buffer[1024];
+    while (1)
+    {
+        ready = poll(pfds, nfds, -1);
+        if (ready == -1)
+            errExit("poll");
+
+        if (pfds->revents & POLLERR)
+        {
+            printf("Error, Connection closed\n");
+        }
+        else if (pfds->revents & POLLHUP)
+        {
+            printf("Connection closed");
+            break;
+        }
+        else if (pfds->revents & POLLIN)
+        {
+            ssize_t bytes_read = read(pfds->fd, buffer, 1024);
+            if (bytes_read == 0)
+            {
+                printf("Connection closed\n");
+                break;
+            }
+            else 
+            {
+                printf("Msg received: %s\n", buffer);
+            }
+        }
+    }
+
+    free(pfds);
+    return 1;
+}
+
+int wait_for_new_socket(int server_fd, struct sockaddr_in *address, int *addrlen)
+{
+    printf("Waiting for client to connect\n");
+    int socket_fd;
+    if ((socket_fd = accept(server_fd, (struct sockaddr *)address, (socklen_t *)addrlen)) < 0)
+    {
+        perror("Accept failed");
+        exit(EXIT_FAILURE);
+    }
+    return socket_fd;
+}
+
 int main(int argc, char **argv)
 {
-    int server_fd, new_socket;
+    int server_fd, socket_fd;
     struct sockaddr_in address;
     int opt = 1;
     int addrlen = sizeof(address);
-    char buffer[1024] = {0};
-    char *hello = "Hello from server";
 
     // create socket file descriptor
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0)
@@ -41,21 +107,18 @@ int main(int argc, char **argv)
         perror("Listen failed");
         exit(EXIT_FAILURE);
     }
-    if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0)
+    socket_fd = wait_for_new_socket(server_fd, &address, &addrlen);
+
+    while (1)
     {
-        perror("Accept failed");
-        exit(EXIT_FAILURE);
+        int result = poll_msgs(socket_fd);
+        if (result == 1)
+        {
+            socket_fd = wait_for_new_socket(server_fd, &address, &addrlen);
+        }
     }
 
-    printf(">");
-    char msg[1024];
-    fgets(msg, 1024, stdin);
-    send(new_socket, msg, strlen(hello), 0);
-    printf("Hello message sent\n");
-    read(new_socket, buffer, 1024);
-    printf("%s\n", buffer);
-    close(new_socket);
+    close(socket_fd);
     close(server_fd);
-
     return 0;
 }
