@@ -3,4 +3,5 @@ project(http_server)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(http_server main.cpp)
+add_executable(http_server main.cpp
+        src/client/main.c)
